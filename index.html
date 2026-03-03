@@ -292,6 +292,10 @@
         <input type="text" id="hecPort" placeholder="8088" inputmode="numeric" autocomplete="off">
       </div>
       <div class="form-group">
+        <label for="hecPath">Path (leave default if unsure)</label>
+        <input type="text" id="hecPath" placeholder="/services/collector/event" autocomplete="off">
+      </div>
+      <div class="form-group">
         <label for="hecToken">HEC Token</label>
         <input type="password" id="hecToken" placeholder="Your HEC token" autocomplete="off">
       </div>
@@ -439,8 +443,11 @@
         }
       }
 
-      function saveConfig(host, port, token, useHttps) {
-        var cfg = { host: (host || '').trim(), port: (port || '').trim(), token: (token || '').trim(), useHttps: useHttps !== false };
+      function saveConfig(host, port, path, token, useHttps) {
+        var p = (path || '').trim();
+        if (!p) p = '/services/collector/event';
+        if (p.indexOf('/') !== 0) p = '/' + p;
+        var cfg = { host: (host || '').trim(), port: (port || '').trim(), path: p, token: (token || '').trim(), useHttps: useHttps !== false };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
       }
 
@@ -450,6 +457,7 @@
       var drawerClose = document.getElementById('drawerClose');
       var hecHost = document.getElementById('hecHost');
       var hecPort = document.getElementById('hecPort');
+      var hecPath = document.getElementById('hecPath');
       var hecToken = document.getElementById('hecToken');
       var hecHttps = document.getElementById('hecHttps');
       var saveSettings = document.getElementById('saveSettings');
@@ -461,6 +469,7 @@
         var cfg = getConfig();
         hecHost.value = cfg.host || '';
         hecPort.value = cfg.port || '8088';
+        hecPath.value = cfg.path || '/services/collector/event';
         hecToken.value = cfg.token || '';
         hecHttps.checked = cfg.useHttps !== false;
         drawer.classList.add('open');
@@ -493,12 +502,13 @@
       saveSettings.addEventListener('click', function () {
         var host = hecHost.value.trim();
         var port = hecPort.value.trim();
+        var path = hecPath.value.trim();
         var token = hecToken.value.trim();
         if (!host || !port || !token) {
           showMessage('Please fill Host, Port, and HEC Token.', 'error');
           return;
         }
-        saveConfig(host, port, token, hecHttps.checked);
+        saveConfig(host, port, path, token, hecHttps.checked);
         showMessage('Settings saved. Close the menu and submit the form when ready.', 'success');
       });
 
@@ -520,7 +530,9 @@
         };
 
         var protocol = (cfg.useHttps !== false) ? 'https' : 'http';
-        var url = protocol + '://' + cfg.host + ':' + cfg.port + '/services/collector/event';
+        var path = (cfg.path || '/services/collector/event').replace(/^\s+|\s+$/g, '');
+        if (path.indexOf('/') !== 0) path = '/' + path;
+        var url = protocol + '://' + cfg.host + ':' + cfg.port + path;
         var payload = {
           event: answers,
           sourcetype: 'hec_form_survey'
@@ -543,15 +555,19 @@
               surveyForm.reset();
             } else {
               return res.text().then(function (t) {
-                throw new Error(res.status + ': ' + (t || res.statusText));
+                var err = new Error(res.status + ': ' + (t || res.statusText));
+                err.status = res.status;
+                throw err;
               });
             }
           })
           .catch(function (err) {
             var msg = err.message || 'Submit failed.';
             var isNetworkError = /load failed|failed to fetch|networkerror|network error/i.test(msg) || err.name === 'TypeError';
-            if (isNetworkError) {
-              msg = 'Request blocked or unreachable. Common causes: (1) CORS — Splunk must allow this site’s origin in HEC/CORS settings. (2) Wrong host/port — confirm in the menu. (3) Self-signed cert — open https://' + cfg.host + ':' + cfg.port + ' in this browser and accept the certificate, then try again.';
+            if (err.status === 404) {
+              msg = '404 Not found. Enable HTTP Event Collector in Splunk (Settings → Data inputs → HTTP Event Collector), or try a different Path in the menu (e.g. /services/collector).';
+            } else if (isNetworkError) {
+              msg = 'Request blocked or unreachable. Common causes: (1) CORS — Splunk must allow this site’s origin. (2) Wrong host/port. (3) Self-signed cert — open the HEC URL in this browser and accept the certificate.';
             }
             showMessage(msg, 'error');
           })
