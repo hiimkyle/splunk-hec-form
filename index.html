@@ -264,6 +264,7 @@
     .message.success { background: rgba(46, 160, 67, 0.2); color: #3fb950; }
     .message.error { background: rgba(248, 81, 73, 0.15); color: var(--danger); }
     .message.info { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+    .message pre { margin: 0.5em 0 0; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, monospace; font-size: 0.8125rem; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -293,7 +294,7 @@
       </div>
       <div class="form-group">
         <label for="hecPath">Path (leave default if unsure)</label>
-        <input type="text" id="hecPath" placeholder="/services/collector/event" autocomplete="off">
+        <input type="text" id="hecPath" placeholder="/services/collector" autocomplete="off">
       </div>
       <div class="form-group">
         <label for="hecToken">HEC Token</label>
@@ -445,7 +446,7 @@
 
       function saveConfig(host, port, path, token, useHttps) {
         var p = (path || '').trim();
-        if (!p) p = '/services/collector/event';
+        if (!p) p = '/services/collector';
         if (p.indexOf('/') !== 0) p = '/' + p;
         var cfg = { host: (host || '').trim(), port: (port || '').trim(), path: p, token: (token || '').trim(), useHttps: useHttps !== false };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
@@ -469,7 +470,7 @@
         var cfg = getConfig();
         hecHost.value = cfg.host || '';
         hecPort.value = cfg.port || '8088';
-        hecPath.value = cfg.path || '/services/collector/event';
+        hecPath.value = cfg.path || '/services/collector';
         hecToken.value = cfg.token || '';
         hecHttps.checked = cfg.useHttps !== false;
         drawer.classList.add('open');
@@ -485,10 +486,16 @@
         overlay.setAttribute('aria-hidden', 'true');
       }
 
-      function showMessage(text, type) {
-        messageEl.textContent = text;
+      function showMessage(text, type, detail) {
+        messageEl.innerHTML = '';
         messageEl.className = 'message ' + (type || 'info');
         messageEl.style.display = 'block';
+        messageEl.appendChild(document.createTextNode(text));
+        if (detail) {
+          var pre = document.createElement('pre');
+          pre.textContent = detail;
+          messageEl.appendChild(pre);
+        }
       }
 
       function hideMessage() {
@@ -530,46 +537,41 @@
         };
 
         var protocol = (cfg.useHttps !== false) ? 'https' : 'http';
-        var path = (cfg.path || '/services/collector/event').replace(/^\s+|\s+$/g, '');
+        var path = (cfg.path || '/services/collector').replace(/^\s+|\s+$/g, '');
         if (path.indexOf('/') !== 0) path = '/' + path;
         var url = protocol + '://' + cfg.host + ':' + cfg.port + path;
-        var payload = {
-          event: answers,
-          sourcetype: 'hec_form_survey'
-        };
+        var payload = { event: answers };
 
         submitBtn.disabled = true;
         showMessage('Sending…', 'info');
 
+        var bodyStr = JSON.stringify(payload);
         fetch(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Splunk ' + cfg.token
           },
-          body: JSON.stringify(payload)
+          body: bodyStr
         })
           .then(function (res) {
-            if (res.ok) {
-              showMessage('Submitted successfully.', 'success');
-              surveyForm.reset();
-            } else {
-              return res.text().then(function (t) {
+            return res.text().then(function (t) {
+              if (res.ok) {
+                showMessage('Submitted successfully.', 'success');
+                surveyForm.reset();
+              } else {
                 var err = new Error(res.status + ': ' + (t || res.statusText));
                 err.status = res.status;
+                err.responseText = t || res.statusText || '';
                 throw err;
-              });
-            }
+              }
+            });
           })
           .catch(function (err) {
-            var msg = err.message || 'Submit failed.';
-            var isNetworkError = /load failed|failed to fetch|networkerror|network error/i.test(msg) || err.name === 'TypeError';
-            if (err.status === 404) {
-              msg = '404 Not found. Enable HTTP Event Collector in Splunk (Settings → Data inputs → HTTP Event Collector), or try a different Path in the menu (e.g. /services/collector).';
-            } else if (isNetworkError) {
-              msg = 'Request blocked or unreachable. Common causes: (1) CORS — Splunk must allow this site’s origin. (2) Wrong host/port. (3) Self-signed cert — open the HEC URL in this browser and accept the certificate.';
-            }
-            showMessage(msg, 'error');
+            var responseText = err.responseText != null ? err.responseText : (err.message || '');
+            var curlCmd = 'curl -k ' + url + ' \\\n  -H "Authorization: Splunk ' + cfg.token + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'' + bodyStr.replace(/'/g, "'\\''") + '\'';
+            var detail = 'Command (curl):\n' + curlCmd + '\n\nResponse:\n' + (err.status ? err.status + ' ' : '') + responseText;
+            showMessage('Submit failed. See command and response below.', 'error', detail);
           })
           .finally(function () {
             submitBtn.disabled = false;
