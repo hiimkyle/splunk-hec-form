@@ -295,6 +295,12 @@
         <label for="hecToken">HEC Token</label>
         <input type="password" id="hecToken" placeholder="Your HEC token" autocomplete="off">
       </div>
+      <div class="form-group">
+        <label class="option" style="min-height: auto; padding: 12px 0; border: none; background: none;">
+          <input type="checkbox" id="hecHttps" checked style="width: 22px; height: 22px;">
+          <span>Use HTTPS</span>
+        </label>
+      </div>
       <div class="drawer-actions">
         <button type="button" class="btn btn-primary" id="saveSettings">Save</button>
       </div>
@@ -433,8 +439,8 @@
         }
       }
 
-      function saveConfig(host, port, token) {
-        var cfg = { host: (host || '').trim(), port: (port || '').trim(), token: (token || '').trim() };
+      function saveConfig(host, port, token, useHttps) {
+        var cfg = { host: (host || '').trim(), port: (port || '').trim(), token: (token || '').trim(), useHttps: useHttps !== false };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
       }
 
@@ -445,6 +451,7 @@
       var hecHost = document.getElementById('hecHost');
       var hecPort = document.getElementById('hecPort');
       var hecToken = document.getElementById('hecToken');
+      var hecHttps = document.getElementById('hecHttps');
       var saveSettings = document.getElementById('saveSettings');
       var surveyForm = document.getElementById('surveyForm');
       var submitBtn = document.getElementById('submitBtn');
@@ -455,6 +462,7 @@
         hecHost.value = cfg.host || '';
         hecPort.value = cfg.port || '8088';
         hecToken.value = cfg.token || '';
+        hecHttps.checked = cfg.useHttps !== false;
         drawer.classList.add('open');
         overlay.classList.add('open');
         drawer.setAttribute('aria-hidden', 'false');
@@ -490,7 +498,7 @@
           showMessage('Please fill Host, Port, and HEC Token.', 'error');
           return;
         }
-        saveConfig(host, port, token);
+        saveConfig(host, port, token, hecHttps.checked);
         showMessage('Settings saved. Close the menu and submit the form when ready.', 'success');
       });
 
@@ -511,7 +519,8 @@
           '4': document.querySelector('input[name="q4"]:checked').value
         };
 
-        var url = 'https://' + cfg.host + ':' + cfg.port + '/services/collector/event';
+        var protocol = (cfg.useHttps !== false) ? 'https' : 'http';
+        var url = protocol + '://' + cfg.host + ':' + cfg.port + '/services/collector/event';
         var payload = {
           event: answers,
           sourcetype: 'hec_form_survey'
@@ -540,8 +549,9 @@
           })
           .catch(function (err) {
             var msg = err.message || 'Submit failed.';
-            if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('NetworkError') !== -1) {
-              msg = 'Network error. If Splunk is on another domain, it may need to allow CORS for this site. Check the browser console.';
+            var isNetworkError = /load failed|failed to fetch|networkerror|network error/i.test(msg) || err.name === 'TypeError';
+            if (isNetworkError) {
+              msg = 'Request blocked or unreachable. Common causes: (1) CORS — Splunk must allow this site’s origin in HEC/CORS settings. (2) Wrong host/port — confirm in the menu. (3) Self-signed cert — open https://' + cfg.host + ':' + cfg.port + ' in this browser and accept the certificate, then try again.';
             }
             showMessage(msg, 'error');
           })
