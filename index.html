@@ -306,6 +306,11 @@
           <span>Use HTTPS</span>
         </label>
       </div>
+      <div class="form-group">
+        <label for="proxyUrl">Proxy URL (optional, for CORS)</label>
+        <input type="text" id="proxyUrl" placeholder="e.g. https://my-proxy.workers.dev" autocomplete="off">
+        <small style="color: var(--muted); font-size: 0.8125rem;">If the browser blocks direct HEC (Load failed), use a proxy. See README.</small>
+      </div>
       <div class="drawer-actions">
         <button type="button" class="btn btn-primary" id="saveSettings">Save</button>
       </div>
@@ -444,11 +449,11 @@
         }
       }
 
-      function saveConfig(host, port, path, token, useHttps) {
+      function saveConfig(host, port, path, token, useHttps, proxyUrl) {
         var p = (path || '').trim();
         if (!p) p = '/services/collector';
         if (p.indexOf('/') !== 0) p = '/' + p;
-        var cfg = { host: (host || '').trim(), port: (port || '').trim(), path: p, token: (token || '').trim(), useHttps: useHttps !== false };
+        var cfg = { host: (host || '').trim(), port: (port || '').trim(), path: p, token: (token || '').trim(), useHttps: useHttps !== false, proxyUrl: (proxyUrl || '').trim() };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
       }
 
@@ -461,6 +466,7 @@
       var hecPath = document.getElementById('hecPath');
       var hecToken = document.getElementById('hecToken');
       var hecHttps = document.getElementById('hecHttps');
+      var proxyUrlInput = document.getElementById('proxyUrl');
       var saveSettings = document.getElementById('saveSettings');
       var surveyForm = document.getElementById('surveyForm');
       var submitBtn = document.getElementById('submitBtn');
@@ -473,6 +479,7 @@
         hecPath.value = cfg.path || '/services/collector';
         hecToken.value = cfg.token || '';
         hecHttps.checked = cfg.useHttps !== false;
+        proxyUrlInput.value = cfg.proxyUrl || '';
         drawer.classList.add('open');
         overlay.classList.add('open');
         drawer.setAttribute('aria-hidden', 'false');
@@ -511,11 +518,12 @@
         var port = hecPort.value.trim();
         var path = hecPath.value.trim();
         var token = hecToken.value.trim();
+        var proxyUrl = proxyUrlInput.value.trim();
         if (!host || !port || !token) {
           showMessage('Please fill Host, Port, and HEC Token.', 'error');
           return;
         }
-        saveConfig(host, port, path, token, hecHttps.checked);
+        saveConfig(host, port, path, token, hecHttps.checked, proxyUrl);
         showMessage('Settings saved. Close the menu and submit the form when ready.', 'success');
       });
 
@@ -541,19 +549,29 @@
         if (path.indexOf('/') !== 0) path = '/' + path;
         var url = protocol + '://' + cfg.host + ':' + cfg.port + path;
         var payload = { event: answers };
+        var bodyStr = JSON.stringify(payload);
+        var useProxy = (cfg.proxyUrl || '').trim();
 
         submitBtn.disabled = true;
         showMessage('Sending…', 'info');
 
-        var bodyStr = JSON.stringify(payload);
-        fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Splunk ' + cfg.token
-          },
-          body: bodyStr
-        })
+        var fetchUrl = useProxy ? useProxy : url;
+        var fetchOpts = useProxy
+          ? {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: url, authorization: 'Splunk ' + cfg.token, body: payload })
+            }
+          : {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Splunk ' + cfg.token
+              },
+              body: bodyStr
+            };
+
+        fetch(fetchUrl, fetchOpts)
           .then(function (res) {
             return res.text().then(function (t) {
               if (res.ok) {
@@ -570,7 +588,11 @@
           .catch(function (err) {
             var responseText = err.responseText != null ? err.responseText : (err.message || '');
             var curlCmd = 'curl -k ' + url + ' \\\n  -H "Authorization: Splunk ' + cfg.token + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'' + bodyStr.replace(/'/g, "'\\''") + '\'';
-            var detail = 'Command (curl):\n' + curlCmd + '\n\nResponse:\n' + (err.status ? err.status + ' ' : '') + responseText;
+            var isLoadFailed = /load failed|failed to fetch|networkerror/i.test(String(responseText)) || err.name === 'TypeError';
+            var note = isLoadFailed
+              ? 'The browser blocked the request (no response from server). This is usually CORS or SSL.\n\n• Run the curl command below in Terminal to verify the endpoint and token.\n• To fix in-browser: enable CORS for this site on the HEC server, or send data via a backend proxy.\n\n'
+              : '';
+            var detail = note + 'Command (curl):\n' + curlCmd + '\n\nResponse:\n' + (err.status ? err.status + ' ' : '') + responseText;
             showMessage('Submit failed. See command and response below.', 'error', detail);
           })
           .finally(function () {
