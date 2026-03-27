@@ -538,10 +538,10 @@
         }
 
         var answers = {
-          '1': document.querySelector('input[name="q1"]:checked').value,
-          '2': document.querySelector('input[name="q2"]:checked').value,
-          '3': document.querySelector('input[name="q3"]:checked').value,
-          '4': document.querySelector('input[name="q4"]:checked').value
+          branch: document.querySelector('input[name="q1"]:checked').value,
+          region: document.querySelector('input[name="q2"]:checked').value,
+          years: document.querySelector('input[name="q3"]:checked').value,
+          specialty: document.querySelector('input[name="q4"]:checked').value
         };
 
         var protocol = (cfg.useHttps !== false) ? 'https' : 'http';
